@@ -1,5 +1,13 @@
 # tinyfin-js
 
+<p align="center">
+   <img src="resources/logo/logo.png" alt="tinyfin logo" />
+</p>
+
+
+
+
+
 `tinyfin-js` is a small browser-first reinforcement learning library for discrete-action Deep Q-Network experiments. It ships as a single JavaScript file, has no runtime dependencies, and exposes a global `tinyfin` object when loaded with a script tag.
 
 The project is intentionally compact and inspectable. It is meant for toy environments, teaching demos, small browser games, and pretrained policy visualizations rather than large-scale RL workloads.
