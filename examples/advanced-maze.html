@@ -1,0 +1,359 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tinyfin-js advanced maze</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f4f6f8;
+      color: #17202c;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+    }
+    main {
+      width: min(980px, calc(100vw - 32px));
+      display: grid;
+      gap: 14px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+    }
+    h1 {
+      margin: 0;
+      font-size: 24px;
+      letter-spacing: 0;
+    }
+    .surface {
+      display: grid;
+      grid-template-columns: minmax(320px, 1fr) 280px;
+      gap: 14px;
+      align-items: start;
+    }
+    .panel {
+      border: 1px solid #d7dde6;
+      border-radius: 8px;
+      background: #fff;
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+    canvas {
+      width: 100%;
+      aspect-ratio: 1;
+      border: 1px solid #c7ced9;
+      background: #ffffff;
+    }
+    .controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    button, label {
+      border: 1px solid #bac3d0;
+      background: #fff;
+      border-radius: 6px;
+      padding: 8px 10px;
+      font: inherit;
+      font-size: 14px;
+    }
+    button {
+      cursor: pointer;
+    }
+    label {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .stats {
+      display: grid;
+      gap: 8px;
+      font-size: 14px;
+    }
+    .stat {
+      border: 1px solid #e0e5ec;
+      border-radius: 6px;
+      padding: 8px;
+      background: #fafbfc;
+    }
+    .stat b {
+      display: block;
+      color: #526070;
+      font-size: 12px;
+      font-weight: 650;
+    }
+    .qbars {
+      display: grid;
+      gap: 8px;
+    }
+    .bar {
+      display: grid;
+      grid-template-columns: 48px 1fr 64px;
+      gap: 8px;
+      align-items: center;
+      font-size: 13px;
+    }
+    .track {
+      height: 10px;
+      border-radius: 5px;
+      background: #e7ebf0;
+      overflow: hidden;
+    }
+    .fill {
+      height: 100%;
+      width: 0;
+      background: #1c7ed6;
+    }
+    @media (max-width: 760px) {
+      header, .surface {
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <h1>Advanced pretrained maze</h1>
+      <div class="controls">
+        <button id="toggle">Pause</button>
+        <button id="step">Step</button>
+        <button id="reset">New Start</button>
+        <label><input id="policy" type="checkbox" checked> Policy</label>
+        <label><input id="heat" type="checkbox"> Heat</label>
+      </div>
+    </header>
+    <div class="surface">
+      <section class="panel">
+        <canvas id="maze" width="720" height="720"></canvas>
+      </section>
+      <aside class="panel">
+        <div class="stats">
+          <div class="stat"><b>Position</b><span id="position">-</span></div>
+          <div class="stat"><b>Action</b><span id="action">-</span></div>
+          <div class="stat"><b>Steps</b><span id="steps">0</span></div>
+          <div class="stat"><b>Status</b><span id="status">Ready</span></div>
+        </div>
+        <div class="qbars" id="qbars"></div>
+      </aside>
+    </div>
+  </main>
+
+  <script src="../tinyfin.js"></script>
+  <script src="./advanced-maze-model.js"></script>
+  <script>
+    const MODEL = window.tinyfinAdvancedMazeModel;
+    const MAP = MODEL.map;
+    const TRAINED_Q_WEIGHTS = MODEL.weights;
+
+    const actionNames = ["Up", "Right", "Down", "Left"];
+    const actionGlyphs = ["^", ">", "v", "<"];
+    const width = MAP[0].length;
+    const height = MAP.length;
+    const canvas = document.getElementById("maze");
+    const ctx = canvas.getContext("2d");
+    const cell = canvas.width / width;
+    const rng = tinyfin.createSeededRandom(21);
+    const openStarts = [];
+    let running = true;
+    let steps = 0;
+    let pos = { x: 1, y: 1 };
+    let path = [];
+    let lastDecision = { action: 1, values: [0, 0, 0, 0] };
+    let status = "Ready";
+
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        if (".S".indexOf(MAP[y][x]) >= 0) openStarts.push({ x, y });
+      }
+    }
+
+    const agent = new tinyfin.DQNAgent({
+      stateSize: width * height,
+      actionSize: 4,
+      hiddenSizes: [],
+      epsilon: 0
+    });
+    agent.online.layers[0].weights = TRAINED_Q_WEIGHTS.map(row => row.slice());
+    agent.online.layers[0].biases = [0, 0, 0, 0];
+    agent.updateTarget();
+
+    function index(x, y) {
+      return y * width + x;
+    }
+
+    function stateAt(p) {
+      const out = new Array(width * height).fill(0);
+      out[index(p.x, p.y)] = 1;
+      return out;
+    }
+
+    function isWall(x, y) {
+      return MAP[y][x] === "#";
+    }
+
+    function reset() {
+      const start = openStarts[Math.floor(rng() * openStarts.length)];
+      pos = { x: start.x, y: start.y };
+      path = [{ x: pos.x, y: pos.y }];
+      steps = 0;
+      status = "Ready";
+      lastDecision = { action: 1, values: agent.policy(stateAt(pos)).values };
+      draw();
+      render();
+    }
+
+    function move(action) {
+      let next = { x: pos.x, y: pos.y };
+      if (action === 0) next.y -= 1;
+      if (action === 1) next.x += 1;
+      if (action === 2) next.y += 1;
+      if (action === 3) next.x -= 1;
+      if (isWall(next.x, next.y)) next = { x: pos.x, y: pos.y };
+      pos = next;
+      path.push({ x: pos.x, y: pos.y });
+      if (path.length > 80) path.shift();
+      steps += 1;
+      if (MAP[pos.y][pos.x] === "G") status = "Goal";
+      else if (MAP[pos.y][pos.x] === "H") status = "Hazard";
+      else status = "Moving";
+    }
+
+    function stepPolicy() {
+      if (status === "Goal" || status === "Hazard") {
+        reset();
+        return;
+      }
+      lastDecision = agent.policy(stateAt(pos));
+      move(lastDecision.action);
+      draw();
+      render();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      if (document.getElementById("heat").checked) drawHeat();
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const c = MAP[y][x];
+          if (c === "#") fillCell(x, y, "#263241", 0);
+          else if (c === "G") fillCell(x, y, "#2b8a3e", 8);
+          else if (c === "H") fillCell(x, y, "#c92a2a", 8);
+          ctx.strokeStyle = "#d8dde5";
+          ctx.strokeRect(x * cell, y * cell, cell, cell);
+        }
+      }
+      if (document.getElementById("policy").checked) drawPolicy();
+      drawPath();
+      fillCell(pos.x, pos.y, "#1c7ed6", 9);
+    }
+
+    function drawHeat() {
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          if (MAP[y][x] === "#") continue;
+          const values = agent.policy(stateAt({ x, y })).values;
+          const best = Math.max.apply(null, values);
+          const alpha = Math.max(0.08, Math.min(0.45, (best + 0.1) / 1.1));
+          ctx.fillStyle = "rgba(43, 138, 62, " + alpha + ")";
+          ctx.fillRect(x * cell, y * cell, cell, cell);
+        }
+      }
+    }
+
+    function drawPolicy() {
+      ctx.save();
+      ctx.font = "18px system-ui";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillStyle = "#526070";
+      for (let y = 0; y < height; y++) {
+        for (let x = 0; x < width; x++) {
+          const c = MAP[y][x];
+          if (c === "#" || c === "G" || c === "H") continue;
+          const decision = agent.policy(stateAt({ x, y }));
+          ctx.fillText(actionGlyphs[decision.action], x * cell + cell / 2, y * cell + cell / 2);
+        }
+      }
+      ctx.restore();
+    }
+
+    function drawPath() {
+      if (path.length < 2) return;
+      ctx.save();
+      ctx.strokeStyle = "#f59f00";
+      ctx.lineWidth = 4;
+      ctx.lineJoin = "round";
+      ctx.lineCap = "round";
+      ctx.beginPath();
+      ctx.moveTo(path[0].x * cell + cell / 2, path[0].y * cell + cell / 2);
+      for (let i = 1; i < path.length; i++) {
+        ctx.lineTo(path[i].x * cell + cell / 2, path[i].y * cell + cell / 2);
+      }
+      ctx.stroke();
+      ctx.restore();
+    }
+
+    function fillCell(x, y, color, inset) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x * cell + inset, y * cell + inset, cell - inset * 2, cell - inset * 2);
+    }
+
+    function render() {
+      document.getElementById("position").textContent = pos.x + "," + pos.y;
+      document.getElementById("action").textContent = actionNames[lastDecision.action];
+      document.getElementById("steps").textContent = steps;
+      document.getElementById("status").textContent = status;
+      renderQBars();
+    }
+
+    function renderQBars() {
+      const box = document.getElementById("qbars");
+      const values = lastDecision.values;
+      const min = Math.min.apply(null, values);
+      const max = Math.max.apply(null, values);
+      box.innerHTML = "";
+      for (let i = 0; i < values.length; i++) {
+        const row = document.createElement("div");
+        row.className = "bar";
+        const label = document.createElement("span");
+        label.textContent = actionNames[i];
+        const track = document.createElement("div");
+        track.className = "track";
+        const fill = document.createElement("div");
+        fill.className = "fill";
+        fill.style.width = ((values[i] - min) / Math.max(0.0001, max - min) * 100).toFixed(1) + "%";
+        fill.style.background = i === lastDecision.action ? "#1c7ed6" : "#91a2b5";
+        const value = document.createElement("span");
+        value.textContent = values[i].toFixed(4);
+        track.appendChild(fill);
+        row.appendChild(label);
+        row.appendChild(track);
+        row.appendChild(value);
+        box.appendChild(row);
+      }
+    }
+
+    document.getElementById("toggle").addEventListener("click", function () {
+      running = !running;
+      this.textContent = running ? "Pause" : "Resume";
+    });
+    document.getElementById("step").addEventListener("click", stepPolicy);
+    document.getElementById("reset").addEventListener("click", reset);
+    document.getElementById("policy").addEventListener("change", draw);
+    document.getElementById("heat").addEventListener("change", draw);
+
+    reset();
+    setInterval(function () {
+      if (running) stepPolicy();
+    }, 260);
+  </script>
+</body>
+</html>

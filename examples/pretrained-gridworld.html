@@ -1,0 +1,214 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tinyfin-js pretrained gridworld</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f5f7fa;
+      color: #18212f;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+    }
+    main {
+      width: min(760px, calc(100vw - 32px));
+      display: grid;
+      gap: 16px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0;
+      letter-spacing: 0;
+    }
+    .controls {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    button {
+      border: 1px solid #b8c0cc;
+      background: #fff;
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #d8dde5;
+      border-radius: 8px;
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+    canvas {
+      width: 100%;
+      aspect-ratio: 1;
+      border: 1px solid #c8ced8;
+      background: #ffffff;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      font-size: 14px;
+    }
+    .stat {
+      border: 1px solid #e0e4ea;
+      border-radius: 6px;
+      padding: 8px;
+      background: #fafbfc;
+    }
+    .stat b {
+      display: block;
+      font-size: 12px;
+      color: #526070;
+      font-weight: 600;
+    }
+    @media (max-width: 560px) {
+      header, .stats {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>Pretrained gridworld</h1>
+      </div>
+      <div class="controls">
+        <button id="step">Step</button>
+        <button id="reset">New Start</button>
+      </div>
+    </header>
+    <section class="panel">
+      <canvas id="world" width="480" height="480"></canvas>
+      <div class="stats">
+        <div class="stat"><b>Position</b><span id="position">0,0</span></div>
+        <div class="stat"><b>Action</b><span id="action">-</span></div>
+        <div class="stat"><b>Q-value</b><span id="qvalue">0</span></div>
+        <div class="stat"><b>Status</b><span id="status">Ready</span></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="../tinyfin.js"></script>
+  <script>
+    const size = 6;
+    const goal = { x: 5, y: 5 };
+    const trap = { x: 3, y: 2 };
+    const actionNames = ["Up", "Right", "Down", "Left"];
+    const rng = tinyfin.createSeededRandom(9);
+    const canvas = document.getElementById("world");
+    const ctx = canvas.getContext("2d");
+    const cells = canvas.width / size;
+
+    const TRAINED_Q_WEIGHTS = [
+      [0.4382, 0.4823, 0.5288, 0.5777, 0.6291, 0.6833, 0.4382, 0.4823, 0.5288, 0.5777, 0.6291, 0.6833, 0.4823, 0.5288, 0.5777, 0.6291, 0.6833, 0.7403, 0.5288, 0.5777, 0.6291, -1, 0.7403, 0.8003, 0.5777, 0.6291, 0.6833, 0.7403, 0.8003, 0.8635, 0.6291, 0.6833, 0.7403, 0.8003, 0.8635, 0.93],
+      [0.4823, 0.5288, 0.5777, 0.6291, 0.6833, 0.6833, 0.5288, 0.5777, 0.6291, 0.6833, 0.7403, 0.7403, 0.5777, 0.6291, -1, 0.7403, 0.8003, 0.8003, 0.6291, 0.6833, 0.7403, 0.8003, 0.8635, 0.8635, 0.6833, 0.7403, 0.8003, 0.8635, 0.93, 0.93, 0.7403, 0.8003, 0.8635, 0.93, 1, 1],
+      [0.4823, 0.5288, 0.5777, 0.6291, 0.6833, 0.7403, 0.5288, 0.5777, 0.6291, -1, 0.7403, 0.8003, 0.5777, 0.6291, 0.6833, 0.7403, 0.8003, 0.8635, 0.6291, 0.6833, 0.7403, 0.8003, 0.8635, 0.93, 0.6833, 0.7403, 0.8003, 0.8635, 0.93, 1, 0.6833, 0.7403, 0.8003, 0.8635, 0.93, 1],
+      [0.4382, 0.4382, 0.4823, 0.5288, 0.5777, 0.6291, 0.4823, 0.4823, 0.5288, 0.5777, 0.6291, 0.6833, 0.5288, 0.5288, 0.5777, 0.6291, -1, 0.7403, 0.5777, 0.5777, 0.6291, 0.6833, 0.7403, 0.8003, 0.6291, 0.6291, 0.6833, 0.7403, 0.8003, 0.8635, 0.6833, 0.6833, 0.7403, 0.8003, 0.8635, 0.93]
+    ];
+
+    const agent = new tinyfin.DQNAgent({
+      stateSize: size * size,
+      actionSize: 4,
+      hiddenSizes: [],
+      epsilon: 0
+    });
+    agent.online.layers[0].weights = TRAINED_Q_WEIGHTS.map(row => row.slice());
+    agent.online.layers[0].biases = [0, 0, 0, 0];
+    agent.updateTarget();
+
+    let pos = { x: 0, y: 0 };
+    let lastAction = "-";
+    let lastQ = 0;
+    let status = "Ready";
+
+    function index(x, y) {
+      return y * size + x;
+    }
+
+    function state() {
+      const out = new Array(size * size).fill(0);
+      out[index(pos.x, pos.y)] = 1;
+      return out;
+    }
+
+    function reset() {
+      agent.resetEpisode();
+      do {
+        pos = { x: Math.floor(rng() * size), y: Math.floor(rng() * size) };
+      } while ((pos.x === goal.x && pos.y === goal.y) || (pos.x === trap.x && pos.y === trap.y));
+      lastAction = "-";
+      lastQ = 0;
+      status = "Ready";
+      draw();
+      renderStats();
+    }
+
+    function move(action) {
+      if (action === 0) pos.y -= 1;
+      if (action === 1) pos.x += 1;
+      if (action === 2) pos.y += 1;
+      if (action === 3) pos.x -= 1;
+      pos.x = Math.max(0, Math.min(size - 1, pos.x));
+      pos.y = Math.max(0, Math.min(size - 1, pos.y));
+      if (pos.x === goal.x && pos.y === goal.y) status = "Goal";
+      else if (pos.x === trap.x && pos.y === trap.y) status = "Trap";
+      else status = "Moving";
+    }
+
+    function takeStep() {
+      if (status === "Goal" || status === "Trap") return;
+      const decision = agent.policy(state());
+      lastAction = actionNames[decision.action];
+      lastQ = decision.values[decision.action];
+      move(decision.action);
+      draw();
+      renderStats();
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          ctx.strokeStyle = "#d8dde5";
+          ctx.strokeRect(x * cells, y * cells, cells, cells);
+        }
+      }
+      fillCell(goal.x, goal.y, "#2b8a3e");
+      fillCell(trap.x, trap.y, "#c92a2a");
+      fillCell(pos.x, pos.y, "#1c7ed6");
+    }
+
+    function fillCell(x, y, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x * cells + 8, y * cells + 8, cells - 16, cells - 16);
+    }
+
+    function renderStats() {
+      document.getElementById("position").textContent = pos.x + "," + pos.y;
+      document.getElementById("action").textContent = lastAction;
+      document.getElementById("qvalue").textContent = lastQ.toFixed(4);
+      document.getElementById("status").textContent = status;
+    }
+
+    document.getElementById("step").addEventListener("click", takeStep);
+    document.getElementById("reset").addEventListener("click", reset);
+    reset();
+  </script>
+</body>
+</html>

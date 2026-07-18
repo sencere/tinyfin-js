@@ -1,0 +1,220 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>tinyfin-js gridworld</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      background: #f6f7f9;
+      color: #1d2430;
+      display: grid;
+      place-items: center;
+      min-height: 100vh;
+    }
+    main {
+      width: min(760px, calc(100vw - 32px));
+      display: grid;
+      gap: 16px;
+    }
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: end;
+      gap: 16px;
+    }
+    h1 {
+      font-size: 24px;
+      margin: 0;
+      letter-spacing: 0;
+    }
+    button {
+      border: 1px solid #b8c0cc;
+      background: #fff;
+      border-radius: 6px;
+      padding: 8px 12px;
+      cursor: pointer;
+    }
+    .panel {
+      background: #fff;
+      border: 1px solid #d8dde5;
+      border-radius: 8px;
+      padding: 16px;
+      display: grid;
+      gap: 14px;
+    }
+    canvas {
+      width: 100%;
+      aspect-ratio: 1;
+      border: 1px solid #c8ced8;
+      background: #ffffff;
+    }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(4, 1fr);
+      gap: 8px;
+      font-size: 14px;
+    }
+    .stat {
+      border: 1px solid #e0e4ea;
+      border-radius: 6px;
+      padding: 8px;
+      background: #fafbfc;
+    }
+    .stat b {
+      display: block;
+      font-size: 12px;
+      color: #526070;
+      font-weight: 600;
+    }
+    @media (max-width: 560px) {
+      header, .stats {
+        grid-template-columns: 1fr;
+        display: grid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <main>
+    <header>
+      <div>
+        <h1>tinyfin-js gridworld</h1>
+      </div>
+      <button id="toggle">Pause</button>
+    </header>
+    <section class="panel">
+      <canvas id="world" width="480" height="480"></canvas>
+      <div class="stats">
+        <div class="stat"><b>Episode</b><span id="episode">0</span></div>
+        <div class="stat"><b>Reward avg</b><span id="reward">0</span></div>
+        <div class="stat"><b>Epsilon</b><span id="epsilon">1</span></div>
+        <div class="stat"><b>Loss</b><span id="loss">0</span></div>
+      </div>
+    </section>
+  </main>
+
+  <script src="../tinyfin.js"></script>
+  <script>
+    const size = 6;
+    const goal = { x: 5, y: 5 };
+    const trap = { x: 3, y: 2 };
+    const rng = tinyfin.createSeededRandom(42);
+    const canvas = document.getElementById("world");
+    const ctx = canvas.getContext("2d");
+    const cells = canvas.width / size;
+    let running = true;
+    let episode = 0;
+    let steps = 0;
+    let agentPos = { x: 0, y: 0 };
+
+    const agent = new tinyfin.DQNAgent({
+      stateSize: 4,
+      actionSize: 4,
+      hiddenSizes: [48, 32],
+      learningRate: 0.001,
+      gamma: 0.95,
+      replaySize: 4000,
+      trainStart: 100,
+      batchSize: 32,
+      epsilonDecay: 0.996,
+      targetUpdateInterval: 80,
+      rng: rng
+    });
+
+    function reset() {
+      agent.resetEpisode();
+      steps = 0;
+      do {
+        agentPos = { x: Math.floor(rng() * size), y: Math.floor(rng() * size) };
+      } while ((agentPos.x === goal.x && agentPos.y === goal.y) || (agentPos.x === trap.x && agentPos.y === trap.y));
+      episode += 1;
+      return state();
+    }
+
+    function state() {
+      return [
+        agentPos.x / (size - 1),
+        agentPos.y / (size - 1),
+        (goal.x - agentPos.x) / (size - 1),
+        (goal.y - agentPos.y) / (size - 1)
+      ];
+    }
+
+    function step(action) {
+      const before = Math.abs(goal.x - agentPos.x) + Math.abs(goal.y - agentPos.y);
+      if (action === 0) agentPos.y -= 1;
+      if (action === 1) agentPos.x += 1;
+      if (action === 2) agentPos.y += 1;
+      if (action === 3) agentPos.x -= 1;
+      agentPos.x = Math.max(0, Math.min(size - 1, agentPos.x));
+      agentPos.y = Math.max(0, Math.min(size - 1, agentPos.y));
+
+      steps += 1;
+      const after = Math.abs(goal.x - agentPos.x) + Math.abs(goal.y - agentPos.y);
+      let reward = after < before ? 0.05 : -0.04;
+      let done = steps >= 50;
+      if (agentPos.x === trap.x && agentPos.y === trap.y) {
+        reward = -1;
+        done = true;
+      }
+      if (agentPos.x === goal.x && agentPos.y === goal.y) {
+        reward = 1;
+        done = true;
+      }
+      agent.observe(reward);
+      return { state: state(), reward: reward, done: done };
+    }
+
+    function draw() {
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          ctx.strokeStyle = "#d8dde5";
+          ctx.strokeRect(x * cells, y * cells, cells, cells);
+        }
+      }
+      fillCell(goal.x, goal.y, "#2b8a3e");
+      fillCell(trap.x, trap.y, "#c92a2a");
+      fillCell(agentPos.x, agentPos.y, "#1c7ed6");
+    }
+
+    function fillCell(x, y, color) {
+      ctx.fillStyle = color;
+      ctx.fillRect(x * cells + 8, y * cells + 8, cells - 16, cells - 16);
+    }
+
+    function renderStats() {
+      const s = agent.stats();
+      document.getElementById("episode").textContent = episode;
+      document.getElementById("reward").textContent = s.averageReward.toFixed(3);
+      document.getElementById("epsilon").textContent = s.epsilon.toFixed(3);
+      document.getElementById("loss").textContent = s.averageLoss.toFixed(5);
+    }
+
+    let current = reset();
+    function loop() {
+      if (running) {
+        for (let i = 0; i < 12; i++) {
+          const action = agent.act(current);
+          const result = step(action);
+          agent.learnFromReward(result.reward, result.state, result.done);
+          current = result.done ? reset() : result.state;
+        }
+      }
+      draw();
+      renderStats();
+      requestAnimationFrame(loop);
+    }
+
+    document.getElementById("toggle").addEventListener("click", function () {
+      running = !running;
+      this.textContent = running ? "Pause" : "Resume";
+    });
+
+    loop();
+  </script>
+</body>
+</html>
